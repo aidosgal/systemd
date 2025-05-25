@@ -13,7 +13,7 @@ type Order struct {
 	mu     sync.Mutex
 }
 
-func main() {
+func main2() {
 	wg := sync.WaitGroup{}
 	wg.Add(2)
 
