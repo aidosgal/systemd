@@ -1,33 +1,53 @@
 package main
 
 import (
-	"sync"
+	"context"
 	"time"
 )
 
-type rateLimiter struct {
-	mu          sync.Mutex
-	tokens      float64
-	capacity    float64
-	refillRate  float64
-	lastRefill  time.Time
-	userBuckets map[string]*UserBucket
+type TokenRateLimiter interface {
 }
 
-type UserBucket struct {
-	tokens     float64
-	lastRefill time.Time
+type tokenRateLimiter struct {
+	tokenBucketCh chan struct{}
 }
 
-type RateLimiter interface {
+func New(ctx context.Context, limit int, period time.Duration) TokenRateLimiter {
+	limiter := &tokenRateLimiter{
+		tokenBucketCh: make(chan struct{}, limit),
+	}
+
+	for i := 0; i < limit; i++ {
+		limiter.tokenBucketCh <- struct{}{}
+	}
+
+	replenishmentInterval := period.Nanoseconds() / int64(limit)
+	go limiter.startPeriodicReplenishment(ctx, time.Duration(replenishmentInterval))
+	return limiter
 }
 
-func New(capacity, refillRate float64) RateLimiter {
-	return &rateLimiter{
-		tokens:      capacity,
-		capacity:    capacity,
-		refillRate:  refillRate,
-		lastRefill:  time.Now(),
-		userBuckets: make(map[string]*UserBucket),
+func (t *tokenRateLimiter) startPeriodicReplenishment(ctx context.Context, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			select {
+			case t.tokenBucketCh <- struct{}{}:
+			default:
+			}
+		}
+	}
+}
+
+func (t *tokenRateLimiter) Allow() bool {
+	select {
+	case <-t.tokenBucketCh:
+		return true
+	default:
+		return false
 	}
 }
